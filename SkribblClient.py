@@ -8,9 +8,10 @@ class SkribblClient:
         self.socket.on("result", self._party_url_received)
         self.me = self.UserData([9, 24, 16, -1], "", False, code, "English", name)
         self.address = self.base_url + ":" + str(port)
+        self.code = code
         
     def connect(self):
-        if self.me.code != "":
+        if self.code != "":
             self._wait_for_url()
         self.socket.connect(self.address)
         self.socket.emit("userData", self.me.data())
@@ -23,7 +24,7 @@ class SkribblClient:
 
     def _party_url_received(self, data):
         self.address = data['host']
-        self.log("Received url for game {}".format(self.me.code))
+        self.log("Received url for game {}".format(self.code))
         self.socket.disconnect()
 
     def log(self, string):
