@@ -1,10 +1,10 @@
 from PyQt5.QtWidgets import QApplication
 import sys
-import GUI
+import gui
 
 def main():
     app = QApplication(sys.argv)
-    window = GUI.MainWindow(name="bot", code="")
+    window = gui.MainWindow(name="bot", code="")
     window.show()
     app.exec_()
     window.client.socket.disconnect()

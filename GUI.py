@@ -2,10 +2,8 @@ import sys
 from PyQt5.QtCore import *
 from PyQt5.QtGui import *
 from PyQt5.QtWidgets import *
-from SkribblClient import SkribblClient
+from skribblclient import SkribblClient
 from game import SkribblGame
-from PIL import Image
-import hitherdither
 from recorder import Recorder
 
 class MainWindow(QMainWindow):
@@ -16,8 +14,14 @@ class MainWindow(QMainWindow):
         self._set_client_listeners()
 
         self.initWindow()
-        self.thread = ClientThread(self.client)
-        self.thread.start()
+
+        self.clientThread = QThread()
+        self.clientProcess = ClientProcess(self.client)
+        self.clientProcess.moveToThread(self.clientThread)
+        self.clientThread.started.connect(self.clientProcess.run)
+
+        self.clientProcess.isChoosingWord.connect(self.onLobbyChooseWord)
+        self.clientThread.start()
 
     def initWindow(self):
         self.resize(1068, 609)
@@ -33,7 +37,7 @@ class MainWindow(QMainWindow):
         self.paintbox.setAutoFillBackground(True)
         self.layout.addWidget(self.paintbox)
 
-        self.wordwindow = WordWindow(self)
+        self.wordwindow = WordWindow(self, self.choiceHandler)
 
         self.chatbox = QWidget(self.central_widget)
         sizePolicy = QSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
@@ -55,11 +59,11 @@ class MainWindow(QMainWindow):
             "lobbyConnected": self.onLobbyConnected,
             "drawCommands": self.onDrawCommands,
             "canvasClear": self.onCanvasClear,
-            "lobbyChooseWord": self.onLobbyChooseWord,
             "lobbyCurrentWord": self.onLobbyCurrentWord,
             "kicked": self.onKicked,
             "lobbyPlayerConnected": self.onLobbyPlayerConnected,
-            "lobbyReveal": self.onLobbyReveal
+            "lobbyReveal": self.onLobbyReveal,
+            "lobbyPlayerGuessedWord": self.onLobbyPlayerGuessedWord
         }
         [self.client.socket.on(event, method) for event, method in listeners.items()]
 
@@ -69,7 +73,6 @@ class MainWindow(QMainWindow):
     def onLobbyConnected(self, data):
         self.game = SkribblGame(data)
         self.chatAddMsg("Connected to server", QColor("green"))
-        self.client.socket.emit("chat", "my name is walter clements and i love fire trucks and monster trucks")
 
     def onDrawCommands(self, data):
         self.paintbox.addUnparsedCommands(data)
@@ -83,27 +86,19 @@ class MainWindow(QMainWindow):
         if data['id'] == self.game.myID:
             words = data['words']
             self.chatAddMsg("Your turn!\nChoices: {}".format(', '.join(words)), QColor("green"))
-            
-            word = words[0] #i cant get wordwindow to work
 
-            self.client.socket.emit("lobbyChooseWord", words.index(word))
-            image = SkribblGame.AutoDraw.getGoogleImage(word)
-            SkribblGame.AutoDraw.drawImage(self.client, self.paintbox, image, 'random')
+            self.wordwindow.chooseWord(words)
+
             [Recorder.addWord(word) for word in words]
+
+    def choiceHandler(self, choice, index):
+        self.client.socket.emit("lobbyChooseWord", index)
+        image = SkribblGame.AutoDraw.getGoogleImage(choice + " drawing")
+        SkribblGame.AutoDraw.drawImage(self.client, self.paintbox, image, SkribblGame.AutoDraw.DrawMethod.scan)
 
     def onLobbyCurrentWord(self, data):
         self.chatAddMsg("Current word: {} (len: {})".format(data, len(data)), QColor("green"))
 
-        """
-        hints = dict()
-        if "_" in data:
-            for letter_index in range(len(data)):
-                if data[letter_index] is not "_":
-                    hints[letter_index] = data[letter_index]
-        possible_answers = Recorder.matchWords(len(data), hints)
-        self.chatAddMsg(str(possible_answers))
-        """
-        
     def onKicked(self):
         self.chatAddMsg("You were kicked", QColor("red"))
 
@@ -113,6 +108,12 @@ class MainWindow(QMainWindow):
     def onLobbyReveal(self, data):
         self.chatAddMsg("The word was \"{}\"".format(data['word']), QColor("green"))
         Recorder.addWord(data['word'])
+
+    def onLobbyPlayerGuessedWord(self, data):
+        if data == self.game.myID:
+            self.chatAddMsg("You guessed the word", QColor("green"))
+        else:
+            self.chatAddMsg(self.game.players[data].name + " has guessed the word", QColor("green"))
 
     def sendInput(self):
         self.client.socket.emit("chat", self.input.text())
@@ -125,13 +126,25 @@ class MainWindow(QMainWindow):
         self.chat.addItem(msg)
         self.chat.scrollToBottom()
 
-class ClientThread(QThread):
-    def __init__(self, client):
-        QThread.__init__(self)
-        self.client = client
+    def possibleAnswers(hint):
+        letters = dict()
+        if "_" in hint:
+            for letter_index in range(len(hint)):
+                if hint[letter_index] is not "_":
+                    letters[letter_index] = hint[letter_index]
+        return Recorder.matchWords(len(hint), letters)
 
-    def __del__(self):
-        self.wait()
+#onLobbyChooseWord must run on the GUI thread, so signals and slots have to be used
+class ClientProcess(QObject):
+    isChoosingWord = pyqtSignal([dict])
+
+    def __init__(self, client):
+        super().__init__()
+        self.client = client
+        self.client.socket.on("lobbyChooseWord", self.onLobbyChooseWord)
+
+    def onLobbyChooseWord(self, data):
+        self.isChoosingWord.emit(data)
 
     def run(self):
         self.client.connect()
@@ -140,11 +153,17 @@ class PaintBox(QWidget):
     def __init__(self, parent=None):
         QWidget.__init__(self, parent)
         self.path = list()
+        self.pen = QPen()
+        self.pen.setStyle(Qt.SolidLine)
+        self.pen.setCapStyle(Qt.RoundCap)
+        self.pen.setJoinStyle(Qt.RoundJoin)
 
     def paintEvent(self, event):
         painter = QPainter(self)
         for line in self.path:
-            painter.setPen(QPen(QColor(line.r, line.g, line.b), line.size, Qt.SolidLine))
+            self.pen.setColor(QColor(line.r, line.g, line.b))
+            self.pen.setWidth(line.size)
+            painter.setPen(self.pen)
             painter.drawLine(line.x, line.y, line.end_x, line.end_y)
 
     def addUnparsedCommands(self, commands):
@@ -152,9 +171,10 @@ class PaintBox(QWidget):
             self.path.append(SkribblGame.Canvas.parseDrawCommand(command, self.width(), self.height()))
 
 class WordWindow(QDialog):
-    def __init__(self, parent=None):
-        QDialog.__init__(self, parent)
+    def __init__(self, parent, choiceHandler):
+        super(WordWindow, self).__init__(parent)
         self.word = None
+        self.choiceHandler = choiceHandler
         self.initWindow()
 
     def initWindow(self):
@@ -165,22 +185,21 @@ class WordWindow(QDialog):
         self.button_layout = QHBoxLayout(self.main_widget)
         self.main_layout.addWidget(self.main_widget)
         self.btn_1 = QPushButton()
-        self.btn_1.clicked.connect(lambda: self.buttonClicked(self.btn_1.text()))
+        self.btn_1.clicked.connect(lambda: self.buttonClicked(self.btn_1.text(), 0))
         self.btn_2 = QPushButton()
-        self.btn_2.clicked.connect(lambda: self.buttonClicked(self.btn_2.text()))
+        self.btn_2.clicked.connect(lambda: self.buttonClicked(self.btn_2.text(), 1))
         self.btn_3 = QPushButton()
-        self.btn_3.clicked.connect(lambda: self.buttonClicked(self.btn_3.text()))
+        self.btn_3.clicked.connect(lambda: self.buttonClicked(self.btn_3.text(), 2))
         self.button_layout.addWidget(self.btn_1)
         self.button_layout.addWidget(self.btn_2)
         self.button_layout.addWidget(self.btn_3)
 
-    def getWord(self, word_list):
+    def chooseWord(self, word_list):
         self.btn_1.setText(word_list[0])
         self.btn_2.setText(word_list[1])
         self.btn_3.setText(word_list[2])
-        self.exec_()
-        return self.word
+        self.show()
 
-    def buttonClicked(self, text):
-        self.word = text
-        self.close()
+    def buttonClicked(self, choice, index):
+        self.hide()
+        self.choiceHandler(choice, index)

@@ -55,10 +55,10 @@ class SkribblGame(object):
             (160, 82, 45),
             (99, 48, 13)
         ]
-        #reverse engineered
+
+        #copied from javascript - not sure what some stuff does but it works
         @classmethod
         def parseDrawCommand(cls, data, canvasWidth, canvasHeight):
-            #i = lambda t, e, n: e if t < e else (n if t > n else t)
             def i(t, e, n):
                 if t < e:
                     return e
@@ -127,6 +127,10 @@ class SkribblGame(object):
              0xA0522D, 0x63300D]
         )
 
+        class DrawMethod:
+            random = 'random'
+            scan = 'scan'
+
         @classmethod
         def drawImage(cls, client, paintbox, image, method):
             img_rgb = cls.formatImage(image)
@@ -139,7 +143,7 @@ class SkribblGame(object):
                     color = img_rgb.getpixel((x, y))
                     new_y = cls.continueToDifferentColor(img_rgb, (x, y))
                     lines.append(SkribblGame.Canvas.Line(x, y, x, new_y, 6, color).data())
-            if method == 'scan':
+            if method == cls.DrawMethod.scan:
                 while len(lines) > 0:
                     if len(lines) <= 8:
                         client.socket.emit("drawCommands", lines)
@@ -148,9 +152,11 @@ class SkribblGame(object):
                         lines.clear()
                     else:
                         client.socket.emit("drawCommands", lines[:8])
+                        paintbox.addUnparsedCommands(lines[:8])
+                        paintbox.update()
                         for i in range(9):
                             del(lines[0])
-            elif method == 'random':
+            elif method == cls.DrawMethod.random:
                 while len(lines) > 0:
                     if len(lines) >= 16:
                         randomindex = random.randint(0, len(lines) - 8)
@@ -176,7 +182,7 @@ class SkribblGame(object):
             image_dithered = hitherdither.ordered.cluster.cluster_dot_dithering(image.resize((400, 300)).convert('RGB'), SkribblGame.AutoDraw.palette, [1, 1, 1], 4)
             return image_dithered.convert('RGB').resize((800, 600))
 
-        def getGoogleImage(string):
+        def getGoogleImage(query):
             gid = google_images_download.googleimagesdownload()
-            arguments = {"keywords": string, "limit":1, "silent_mode": True, "output_directory": "images"}
-            return Image.open(gid.download(arguments)[0][string][0])
+            arguments = {"keywords": query, "limit":1, "silent_mode": True, "output_directory": "images"}
+            return Image.open(gid.download(arguments)[0][query][0])
