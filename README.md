@@ -1,5 +1,7 @@
 # Skribbl.io-Client
-Play Skribbl.io without a browser
+Scribbl.io-Client is a python client which can play the popular online drawing game *scribbl.io* by interfacing with the API via websockets.
+
+Through the client, you can view the paintings of other players and guess what they are drawing. The client does not offer drawing functionality, but automatically downloads a relevant image for your word and attempts to draw it automatically.
 
 ## Features:
  - GUI with textbox and canvas to chat and see what other people paint
